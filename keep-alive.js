@@ -1,22 +1,20 @@
-const axios = require('axios');
+const https = require('https');
 
-// URL вашего приложения на Render
-const RENDER_URL = process.env.RENDER_URL || 'https://your-bot.onrender.com';
-
-async function pingServer() {
-  try {
-    const response = await axios.get(`${RENDER_URL}/health`);
-    console.log(`[${new Date().toISOString()}] Ping successful: ${response.status}`);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Ping failed:`, error.message);
-  }
+// Функция для пинга самого себя (для Render бесплатного тарифа)
+function keepAlive() {
+  const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3000}`;
+  
+  https.get(`${url}/health`, (res) => {
+    console.log(`[${new Date().toISOString()}] Keep-alive ping: ${res.statusCode}`);
+  }).on('error', (err) => {
+    console.error(`[${new Date().toISOString()}] Keep-alive error: ${err.message}`);
+  });
 }
 
-// Пинг каждые 5 минут (300000 мс)
-setInterval(pingServer, 5 * 60 * 1000);
+// Пинг каждые 5 минут
+setInterval(keepAlive, 5 * 60 * 1000);
 
-// Первый пинг при запуске
-console.log('Keep-alive script started');
-pingServer();
+// Первый пинг через 10 секунд после запуска
+setTimeout(keepAlive, 10000);
 
-module.exports = { pingServer };
+console.log('Keep-alive system started');
