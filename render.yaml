@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: telegram-tamagochi-bot
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: RENDER_URL
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: free
