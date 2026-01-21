@@ -1,7 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 
 // Загрузка переменных окружения
@@ -32,232 +31,139 @@ app.listen(PORT, () => {
 // Инициализация бота
 const bot = new Telegraf(BOT_TOKEN);
 
-// Инициализация БД
-const dbPath = path.join(__dirname, 'data', 'tamagochi.db');
-if (!fs.existsSync(path.dirname(dbPath))) {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+// Папка для хранения данных
+const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const ITEMS_FILE = path.join(DATA_DIR, 'items.json');
+
+// Базовая структура данных
+const defaultItems = [
+  { id: 1, name: 'Морковь', type: 'food', rarity: 'common', price: 5 },
+  { id: 2, name: 'Яблоко', type: 'food', rarity: 'common', price: 10 },
+  { id: 3, name: 'Золотое яблоко', type: 'food', rarity: 'rare', price: 50 },
+  { id: 4, name: 'Деревянный меч', type: 'equipment', rarity: 'common', price: 30 },
+  { id: 5, name: 'Железная броня', type: 'equipment', rarity: 'uncommon', price: 100 },
+  { id: 6, name: 'Обычный ключ', type: 'key', rarity: 'common', price: 100 },
+  { id: 7, name: 'Семена моркови', type: 'seed', rarity: 'common', price: 10 },
+  { id: 8, name: 'Саженец яблони', type: 'seed', rarity: 'uncommon', price: 50 }
+];
+
+// Инициализация данных
+async function initData() {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    
+    // Создаем файл предметов если его нет
+    try {
+      await fs.access(ITEMS_FILE);
+    } catch {
+      await fs.writeFile(ITEMS_FILE, JSON.stringify(defaultItems, null, 2));
+    }
+    
+    // Создаем файл пользователей если его нет
+    try {
+      await fs.access(USERS_FILE);
+    } catch {
+      await fs.writeFile(USERS_FILE, JSON.stringify({}, null, 2));
+    }
+    
+    console.log('✅ Данные инициализированы');
+  } catch (error) {
+    console.error('❌ Ошибка инициализации данных:', error);
+  }
 }
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('❌ Ошибка подключения к БД:', err);
-  } else {
-    console.log('✅ Подключено к SQLite базе данных');
-    initDatabase();
+// ==================== РАБОТА С ДАННЫМИ ====================
+async function getUsers() {
+  try {
+    const data = await fs.readFile(USERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    return {};
   }
-});
-
-// ==================== ИНИЦИАЛИЗАЦИЯ БД ====================
-function initDatabase() {
-  // Создаем таблицы если их нет
-  const queries = [
-    `CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      telegram_id INTEGER UNIQUE NOT NULL,
-      username TEXT,
-      coins INTEGER DEFAULT 100,
-      gems INTEGER DEFAULT 5,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`,
-    
-    `CREATE TABLE IF NOT EXISTS pets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT DEFAULT 'Питомец',
-      type TEXT DEFAULT 'dragon',
-      level INTEGER DEFAULT 1,
-      exp INTEGER DEFAULT 0,
-      hunger REAL DEFAULT 50.0,
-      energy REAL DEFAULT 80.0,
-      mood REAL DEFAULT 70.0,
-      health REAL DEFAULT 100.0,
-      attack REAL DEFAULT 10.0,
-      defense REAL DEFAULT 5.0,
-      speed REAL DEFAULT 8.0,
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    )`,
-    
-    `CREATE TABLE IF NOT EXISTS gardens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER UNIQUE NOT NULL,
-      slot1 TEXT,
-      slot2 TEXT,
-      slot3 TEXT,
-      planted_at TEXT DEFAULT '{}',
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    )`,
-    
-    `CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      rarity TEXT DEFAULT 'common',
-      price INTEGER DEFAULT 0
-    )`,
-    
-    `CREATE TABLE IF NOT EXISTS inventory (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      item_id INTEGER NOT NULL,
-      quantity INTEGER DEFAULT 1,
-      FOREIGN KEY (user_id) REFERENCES users(id),
-      FOREIGN KEY (item_id) REFERENCES items(id)
-    )`
-  ];
-
-  // Выполняем запросы последовательно
-  let index = 0;
-  function runNextQuery() {
-    if (index < queries.length) {
-      db.run(queries[index], (err) => {
-        if (err) {
-          console.error(`❌ Ошибка создания таблицы ${index + 1}:`, err);
-        }
-        index++;
-        runNextQuery();
-      });
-    } else {
-      seedItems();
-    }
-  }
-  
-  runNextQuery();
 }
 
-function seedItems() {
-  db.get('SELECT COUNT(*) as count FROM items', (err, row) => {
-    if (err) {
-      console.error('❌ Ошибка проверки items:', err);
-      return;
-    }
-    
-    if (row.count === 0) {
-      const items = [
-        ['Морковь', 'food', 'common', 5],
-        ['Яблоко', 'food', 'common', 10],
-        ['Золотое яблоко', 'food', 'rare', 50],
-        ['Деревянный меч', 'equipment', 'common', 30],
-        ['Железная броня', 'equipment', 'uncommon', 100],
-        ['Обычный ключ', 'key', 'common', 100],
-        ['Семена моркови', 'seed', 'common', 10],
-        ['Саженец яблони', 'seed', 'uncommon', 50]
-      ];
-      
-      const stmt = db.prepare('INSERT INTO items (name, type, rarity, price) VALUES (?, ?, ?, ?)');
-      
-      items.forEach(item => {
-        stmt.run(item, (err) => {
-          if (err) console.error('❌ Ошибка вставки предмета:', err);
-        });
-      });
-      
-      stmt.finalize();
-      console.log('✅ Базовые предметы добавлены');
-    }
-  });
+async function saveUsers(users) {
+  try {
+    await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  } catch (error) {
+    console.error('❌ Ошибка сохранения пользователей:', error);
+  }
+}
+
+async function getItems() {
+  try {
+    const data = await fs.readFile(ITEMS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    return defaultItems;
+  }
 }
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-function getOrCreateUser(telegramId, username, callback) {
-  db.get('SELECT * FROM users WHERE telegram_id = ?', [telegramId], (err, user) => {
-    if (err) {
-      console.error('❌ Ошибка получения пользователя:', err);
-      callback(null);
-      return;
-    }
-    
-    if (!user) {
-      db.run('INSERT INTO users (telegram_id, username) VALUES (?, ?)', [telegramId, username], function(err) {
-        if (err) {
-          console.error('❌ Ошибка создания пользователя:', err);
-          callback(null);
-          return;
-        }
-        
-        const userId = this.lastID;
-        
-        // Создаем питомца
-        db.run('INSERT INTO pets (user_id, name, type) VALUES (?, ?, ?)', 
-          [userId, 'Мой дракончик', 'dragon'], (err) => {
-            if (err) console.error('❌ Ошибка создания питомца:', err);
-            
-            // Создаем сад
-            db.run('INSERT INTO gardens (user_id) VALUES (?)', [userId], (err) => {
-              if (err) console.error('❌ Ошибка создания сада:', err);
-              
-              // Даем стартовые предметы
-              db.get('SELECT id FROM items WHERE name = ?', ['Морковь'], (err, item) => {
-                if (!err && item) {
-                  db.run('INSERT INTO inventory (user_id, item_id, quantity) VALUES (?, ?, ?)',
-                    [userId, item.id, 3]);
-                }
-                
-                // Возвращаем пользователя
-                db.get('SELECT * FROM users WHERE id = ?', [userId], (err, newUser) => {
-                  callback(newUser);
-                });
-              });
-            });
-          });
-      });
-    } else {
-      callback(user);
-    }
-  });
-}
-
-function getPet(userId, callback) {
-  db.get('SELECT * FROM pets WHERE user_id = ?', [userId], (err, pet) => {
-    if (err) {
-      console.error('❌ Ошибка получения питомца:', err);
-      callback(null);
-    } else {
-      callback(pet);
-    }
-  });
-}
-
-function updatePetStats(petId) {
-  db.get('SELECT * FROM pets WHERE id = ?', [petId], (err, pet) => {
-    if (err || !pet) return;
-    
-    const newHunger = Math.max(0, pet.hunger - 0.5);
-    const newMood = Math.max(0, pet.mood - 0.3);
-    const newEnergy = Math.min(100, pet.energy + 1);
-    
-    db.run('UPDATE pets SET hunger = ?, mood = ?, energy = ? WHERE id = ?',
-      [newHunger, newMood, newEnergy, petId]);
-  });
-}
-
-// ==================== КОМАНДЫ БОТА ====================
-bot.start(async (ctx) => {
-  const telegramId = ctx.from.id;
-  const username = ctx.from.username || ctx.from.first_name;
+async function getOrCreateUser(telegramId, username) {
+  const users = await getUsers();
+  const userId = telegramId.toString();
   
-  getOrCreateUser(telegramId, username, (user) => {
-    if (!user) {
-      ctx.reply('❌ Ошибка создания профиля. Попробуйте еще раз.');
-      return;
+  if (!users[userId]) {
+    users[userId] = {
+      id: userId,
+      telegramId: telegramId,
+      username: username,
+      coins: 100,
+      gems: 5,
+      pet: {
+        name: 'Мой дракончик',
+        type: 'dragon',
+        level: 1,
+        exp: 0,
+        hunger: 50,
+        energy: 80,
+        mood: 70,
+        health: 100,
+        attack: 10,
+        defense: 5,
+        speed: 8,
+        lastUpdate: new Date().toISOString()
+      },
+      garden: {
+        slot1: null,
+        slot2: null,
+        slot3: null,
+        plantedAt: {}
+      },
+      inventory: [
+        { itemId: 1, quantity: 3 }, // 3 морковки
+        { itemId: 7, quantity: 2 }  // 2 семени моркови
+      ],
+      created: new Date().toISOString()
+    };
+    
+    await saveUsers(users);
+  }
+  
+  return users[userId];
+}
+
+function updatePetStats(pet) {
+  const now = new Date();
+  const lastUpdate = new Date(pet.lastUpdate);
+  const hoursPassed = (now - lastUpdate) / (1000 * 60 * 60);
+  
+  if (hoursPassed > 0) {
+    pet.hunger = Math.max(0, pet.hunger - (5 * hoursPassed));
+    pet.energy = Math.min(100, pet.energy + (2 * hoursPassed));
+    pet.mood = Math.max(0, pet.mood - (3 * hoursPassed));
+    
+    if (pet.hunger < 20) {
+      pet.health = Math.max(0, pet.health - (2 * hoursPassed));
     }
     
-    getPet(user.id, (pet) => {
-      if (!pet) {
-        ctx.reply('❌ Ошибка создания питомца. Попробуйте еще раз.');
-        return;
-      }
-      
-      ctx.reply(
-        `🎮 Добро пожаловать в Pet Arena!\n\n` +
-        `🐾 Ваш питомец ${pet.name} готов к приключениям!\n` +
-        `💰 Монет: ${user.coins}\n` +
-        `💎 Самоцветов: ${user.gems}\n\n` +
-        `Выберите действие:`,
-        mainKeyboard
-      );
-    });
-  });
-});
+    pet.lastUpdate = now.toISOString();
+  }
+  
+  return pet;
+}
 
 // ==================== КЛАВИАТУРЫ ====================
 const mainKeyboard = Markup.keyboard([
@@ -266,281 +172,425 @@ const mainKeyboard = Markup.keyboard([
   ['🏪 Магазин']
 ]).resize();
 
-bot.hears('🐶 Мой питомец', async (ctx) => {
-  const telegramId = ctx.from.id;
+// ==================== КОМАНДЫ БОТА ====================
+bot.start(async (ctx) => {
+  const user = await getOrCreateUser(ctx.from.id, ctx.from.username || ctx.from.first_name);
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
-    
-    getPet(user.id, (pet) => {
-      if (!pet) return;
-      
-      updatePetStats(pet.id);
-      
-      // Получаем обновленного питомца
-      db.get('SELECT * FROM pets WHERE id = ?', [pet.id], (err, updatedPet) => {
-        if (err || !updatedPet) return;
-        
-        ctx.reply(
-          `🐾 ${updatedPet.name}\n` +
-          `📊 Уровень: ${updatedPet.level}\n` +
-          `❤️ Здоровье: ${updatedPet.health.toFixed(1)}%\n` +
-          `🍖 Голод: ${updatedPet.hunger.toFixed(1)}%\n` +
-          `⚡ Энергия: ${updatedPet.energy.toFixed(1)}%\n` +
-          `😊 Настроение: ${updatedPet.mood.toFixed(1)}%\n\n` +
-          `⚔️ Атака: ${updatedPet.attack.toFixed(1)}\n` +
-          `🛡️ Защита: ${updatedPet.defense.toFixed(1)}`,
-          Markup.inlineKeyboard([
-            [Markup.button.callback('🍎 Покормить', 'feed_pet')],
-            [Markup.button.callback('🎮 Поиграть', 'play_pet')],
-            [Markup.button.callback('💤 Уложить спать', 'sleep_pet')]
-          ])
-        );
-      });
-    });
-  });
+  await ctx.reply(
+    `🎮 Добро пожаловать в Pet Arena!\n\n` +
+    `🐾 Ваш питомец ${user.pet.name} готов к приключениям!\n` +
+    `💰 Монет: ${user.coins}\n` +
+    `💎 Самоцветов: ${user.gems}\n\n` +
+    `Выберите действие:`,
+    mainKeyboard
+  );
+});
+
+bot.hears('🐶 Мой питомец', async (ctx) => {
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
+  
+  if (!user) {
+    await ctx.reply('Сначала запустите бота командой /start');
+    return;
+  }
+  
+  user.pet = updatePetStats(user.pet);
+  await saveUsers(users);
+  
+  const pet = user.pet;
+  
+  await ctx.reply(
+    `🐾 ${pet.name} (${pet.type})\n` +
+    `📊 Уровень: ${pet.level} | Опыт: ${pet.exp}/${pet.level * 100}\n\n` +
+    `❤️ Здоровье: ${getStatusEmoji(pet.health)} ${pet.health.toFixed(1)}%\n` +
+    `🍖 Голод: ${getStatusEmoji(pet.hunger)} ${pet.hunger.toFixed(1)}%\n` +
+    `⚡ Энергия: ${getStatusEmoji(pet.energy)} ${pet.energy.toFixed(1)}%\n` +
+    `😊 Настроение: ${getStatusEmoji(pet.mood)} ${pet.mood.toFixed(1)}%\n\n` +
+    `⚔️ Атака: ${pet.attack.toFixed(1)}\n` +
+    `🛡️ Защита: ${pet.defense.toFixed(1)}\n` +
+    `🏃 Скорость: ${pet.speed.toFixed(1)}`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🍎 Покормить', 'feed_pet')],
+      [Markup.button.callback('🎮 Поиграть', 'play_pet')],
+      [Markup.button.callback('💤 Уложить спать', 'sleep_pet')]
+    ])
+  );
 });
 
 bot.hears('⚔️ Бой', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
-    
-    getPet(user.id, (pet) => {
-      if (!pet) return;
-      
-      ctx.reply(
-        `⚔️ Арена битв\n\n` +
-        `Ваш питомец: ${pet.name}\n` +
-        `❤️ Здоровье: ${pet.health.toFixed(1)}%\n` +
-        `⚔️ Атака: ${pet.attack.toFixed(1)}\n\n` +
-        `Выберите противника:`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🤖 Легкий бот (награда: 10-20 монет)', 'battle_easy')],
-          [Markup.button.callback('⚔️ Средний бот (награда: 20-40 монет)', 'battle_medium')],
-          [Markup.button.callback('👹 Сложный бот (награда: 40-80 монет)', 'battle_hard')]
-        ])
-      );
-    });
-  });
+  if (!user) {
+    await ctx.reply('Сначала запустите бота командой /start');
+    return;
+  }
+  
+  const pet = user.pet;
+  
+  await ctx.reply(
+    `⚔️ Арена битв\n\n` +
+    `Ваш питомец: ${pet.name}\n` +
+    `❤️ Здоровье: ${pet.health.toFixed(1)}%\n` +
+    `⚔️ Атака: ${pet.attack.toFixed(1)}\n\n` +
+    `Выберите противника:`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🤖 Легкий бот (награда: 10-20 монет)', 'battle_easy')],
+      [Markup.button.callback('⚔️ Средний бот (награда: 20-40 монет)', 'battle_medium')],
+      [Markup.button.callback('👹 Сложный бот (награда: 40-80 монет)', 'battle_hard')]
+    ])
+  );
 });
 
 bot.hears('🌱 Сад', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
-    
-    db.get('SELECT * FROM gardens WHERE user_id = ?', [user.id], (err, garden) => {
-      if (err || !garden) {
-        ctx.reply('❌ Ошибка загрузки сада');
-        return;
-      }
-      
-      let gardenText = '🌱 Ваш сад:\n\n';
-      for (let i = 1; i <= 3; i++) {
-        const slot = garden[`slot${i}`];
-        gardenText += `${i}. ${slot ? `🌱 ${slot}` : '🌫️ Пусто'}\n`;
-      }
-      
-      ctx.reply(
-        gardenText,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🌱 Посадить растение', 'plant_seed')],
-          [Markup.button.callback('🌾 Собрать урожай', 'harvest_garden')]
-        ])
-      );
-    });
-  });
+  if (!user) {
+    await ctx.reply('Сначала запустите бота командой /start');
+    return;
+  }
+  
+  const garden = user.garden;
+  
+  let gardenText = '🌱 Ваш сад:\n\n';
+  for (let i = 1; i <= 3; i++) {
+    const slot = garden[`slot${i}`];
+    gardenText += `${i}. ${slot ? `🌱 ${slot}` : '🌫️ Пусто'}\n`;
+  }
+  
+  await ctx.reply(
+    gardenText,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🌱 Посадить растение', 'plant_seed')],
+      [Markup.button.callback('🌾 Собрать урожай', 'harvest_garden')]
+    ])
+  );
 });
 
 bot.hears('🎒 Инвентарь', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
-    
-    db.all(`
-      SELECT i.name, i.type, inv.quantity 
-      FROM inventory inv 
-      JOIN items i ON inv.item_id = i.id 
-      WHERE inv.user_id = ?
-    `, [user.id], (err, inventory) => {
-      if (err) {
-        ctx.reply('❌ Ошибка загрузки инвентаря');
-        return;
-      }
+  if (!user) {
+    await ctx.reply('Сначала запустите бота командой /start');
+    return;
+  }
+  
+  const items = await getItems();
+  
+  if (user.inventory.length === 0) {
+    await ctx.reply('🎒 Ваш инвентарь пуст!', mainKeyboard);
+    return;
+  }
+  
+  let inventoryText = '🎒 Ваш инвентарь:\n\n';
+  
+  user.inventory.forEach(invItem => {
+    const item = items.find(i => i.id === invItem.itemId);
+    if (item) {
+      const emoji = {
+        'food': '🍎',
+        'equipment': '⚔️',
+        'key': '🔑',
+        'seed': '🌱'
+      }[item.type] || '📦';
       
-      if (inventory.length === 0) {
-        ctx.reply('🎒 Ваш инвентарь пуст!', mainKeyboard);
-        return;
-      }
-      
-      let inventoryText = '🎒 Ваш инвентарь:\n\n';
-      inventory.forEach(item => {
-        const emoji = {
-          'food': '🍎',
-          'equipment': '⚔️',
-          'key': '🔑',
-          'seed': '🌱'
-        }[item.type] || '📦';
-        
-        inventoryText += `${emoji} ${item.name} x${item.quantity}\n`;
-      });
-      
-      ctx.reply(inventoryText, mainKeyboard);
-    });
+      inventoryText += `${emoji} ${item.name} x${invItem.quantity}\n`;
+    }
   });
+  
+  await ctx.reply(inventoryText, mainKeyboard);
 });
 
 bot.hears('🏪 Магазин', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
+  if (!user) {
+    await ctx.reply('Сначала запустите бота командой /start');
+    return;
+  }
+  
+  const items = await getItems();
+  
+  let shopText = `🏪 Магазин | Монеты: ${user.coins}\n\n`;
+  
+  items.forEach(item => {
+    const emoji = {
+      'food': '🍎',
+      'equipment': '⚔️',
+      'key': '🔑',
+      'seed': '🌱'
+    }[item.type] || '📦';
     
-    db.all('SELECT * FROM items ORDER BY type, price', [], (err, items) => {
-      if (err) {
-        ctx.reply('❌ Ошибка загрузки магазина');
-        return;
-      }
-      
-      let shopText = `🏪 Магазин | Монеты: ${user.coins}\n\n`;
-      
-      items.forEach(item => {
-        const emoji = {
-          'food': '🍎',
-          'equipment': '⚔️',
-          'key': '🔑',
-          'seed': '🌱'
-        }[item.type] || '📦';
-        
-        shopText += `${emoji} ${item.name} - ${item.price} монет (${item.rarity})\n`;
-      });
-      
-      ctx.reply(
-        shopText,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🍎 Купить морковь (5 монет)', 'buy_carrot')],
-          [Markup.button.callback('🌱 Купить семена (10 монет)', 'buy_seeds')],
-          [Markup.button.callback('🔑 Купить ключ (100 монет)', 'buy_key')]
-        ])
-      );
-    });
+    shopText += `${emoji} ${item.name} - ${item.price} монет (${item.rarity})\n`;
   });
+  
+  await ctx.reply(
+    shopText,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🍎 Купить морковь (5 монет)', 'buy_carrot')],
+      [Markup.button.callback('🌱 Купить семена (10 монет)', 'buy_seeds')],
+      [Markup.button.callback('🔑 Купить ключ (100 монет)', 'buy_key')]
+    ])
+  );
 });
 
 // ==================== CALLBACK ОБРАБОТЧИКИ ====================
 bot.action('feed_pet', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) {
-      ctx.answerCbQuery('❌ Ошибка пользователя');
-      return;
-    }
-    
-    // Проверяем есть ли еда
-    db.get(`
-      SELECT inv.id, inv.quantity 
-      FROM inventory inv 
-      JOIN items i ON inv.item_id = i.id 
-      WHERE inv.user_id = ? AND i.type = 'food'
-      LIMIT 1
-    `, [user.id], (err, food) => {
-      if (err || !food) {
-        ctx.answerCbQuery('У вас нет еды! Купите в магазине.');
-        return;
-      }
-      
-      // Используем еду
-      if (food.quantity === 1) {
-        db.run('DELETE FROM inventory WHERE id = ?', [food.id]);
-      } else {
-        db.run('UPDATE inventory SET quantity = quantity - 1 WHERE id = ?', [food.id]);
-      }
-      
-      // Кормим питомца
-      getPet(user.id, (pet) => {
-        if (!pet) return;
-        
-        const newHunger = Math.min(100, pet.hunger + 30);
-        db.run('UPDATE pets SET hunger = ? WHERE id = ?', [newHunger, pet.id]);
-        
-        ctx.answerCbQuery('Питомец покормлен! +30 к голоду');
-        ctx.editMessageText(
-          `🍎 Вы покормили питомца!\n` +
-          `🍖 Голод: ${newHunger.toFixed(1)}%\n` +
-          `🍎 Еды осталось: ${food.quantity - 1}`,
-          Markup.inlineKeyboard([
-            [Markup.button.callback('👈 Назад', 'back_to_main')]
-          ])
-        );
-      });
-    });
+  if (!user) {
+    await ctx.answerCbQuery('❌ Ошибка пользователя');
+    return;
+  }
+  
+  // Ищем еду в инвентаре
+  const foodIndex = user.inventory.findIndex(invItem => {
+    const items = defaultItems; // Используем дефолтные предметы
+    const item = items.find(i => i.id === invItem.itemId);
+    return item && item.type === 'food';
   });
+  
+  if (foodIndex === -1) {
+    await ctx.answerCbQuery('У вас нет еды! Купите в магазине.');
+    return;
+  }
+  
+  // Используем еду
+  if (user.inventory[foodIndex].quantity === 1) {
+    user.inventory.splice(foodIndex, 1);
+  } else {
+    user.inventory[foodIndex].quantity -= 1;
+  }
+  
+  // Кормим питомца
+  user.pet.hunger = Math.min(100, user.pet.hunger + 30);
+  await saveUsers(users);
+  
+  await ctx.answerCbQuery('Питомец покормлен! +30 к голоду');
+  await ctx.editMessageText(
+    `🍎 Вы покормили питомца!\n` +
+    `🍖 Голод: ${user.pet.hunger.toFixed(1)}%\n` +
+    `🍎 Еды осталось: ${user.inventory[foodIndex]?.quantity || 0}`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('👈 Назад', 'back_to_main')]
+    ])
+  );
 });
 
 bot.action('battle_easy', async (ctx) => {
-  const telegramId = ctx.from.id;
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
   
-  getOrCreateUser(telegramId, ctx.from.username, (user) => {
-    if (!user) return;
+  if (!user) {
+    await ctx.answerCbQuery('❌ Ошибка пользователя');
+    return;
+  }
+  
+  const pet = user.pet;
+  
+  // Простой бой
+  const playerDamage = Math.floor(Math.random() * 15) + 10;
+  const aiDamage = Math.floor(Math.random() * 10) + 5;
+  
+  const playerHealth = Math.max(0, pet.health - aiDamage);
+  const win = playerHealth > 0;
+  
+  if (win) {
+    const reward = Math.floor(Math.random() * 11) + 10; // 10-20 монет
+    user.coins += reward;
+    pet.health = playerHealth;
+    pet.exp += 5;
     
-    getPet(user.id, (pet) => {
-      if (!pet) return;
+    // Проверяем повышение уровня
+    const neededExp = pet.level * 100;
+    if (pet.exp >= neededExp) {
+      pet.level += 1;
+      pet.exp = 0;
+      pet.attack += 2;
+      pet.defense += 1;
+      pet.health = 100;
+    }
+    
+    // Шанс получить предмет (30%)
+    if (Math.random() < 0.3) {
+      const commonItems = defaultItems.filter(item => item.rarity === 'common');
+      const randomItem = commonItems[Math.floor(Math.random() * commonItems.length)];
       
-      // Простой бой
-      const playerDamage = Math.floor(Math.random() * 15) + 10;
-      const aiDamage = Math.floor(Math.random() * 10) + 5;
-      
-      const playerHealth = Math.max(0, pet.health - aiDamage);
-      const win = playerHealth > 0;
-      
-      if (win) {
-        const reward = Math.floor(Math.random() * 11) + 10; // 10-20 монет
-        db.run('UPDATE users SET coins = coins + ? WHERE id = ?', [reward, user.id]);
-        db.run('UPDATE pets SET health = ?, exp = exp + 5 WHERE id = ?', [playerHealth, pet.id]);
-        
-        // Шанс получить предмет
-        if (Math.random() < 0.3) {
-          db.get('SELECT id FROM items WHERE rarity = ? ORDER BY RANDOM() LIMIT 1', ['common'], (err, item) => {
-            if (!err && item) {
-              db.run(`
-                INSERT INTO inventory (user_id, item_id, quantity) 
-                VALUES (?, ?, 1)
-                ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
-              `, [user.id, item.id]);
-            }
-          });
-        }
-        
-        ctx.editMessageText(
-          `🎉 ПОБЕДА!\n\n` +
-          `Вы нанесли ${playerDamage} урона!\n` +
-          `Противник нанес ${aiDamage} урона.\n\n` +
-          `💰 Получено: ${reward} монет\n` +
-          `⭐ Опыта: +5\n` +
-          `❤️ Осталось здоровья: ${playerHealth.toFixed(1)}%\n\n` +
-          `Продолжайте в том же духе!`,
-          mainKeyboard
-        );
+      const existingItem = user.inventory.find(inv => inv.itemId === randomItem.id);
+      if (existingItem) {
+        existingItem.quantity += 1;
       } else {
-        db.run('UPDATE pets SET health = 50 WHERE id = ?', [pet.id]);
-        
-        ctx.editMessageText(
-          `💀 ПОРАЖЕНИЕ\n\n` +
-          `Противник оказался сильнее!\n` +
-          `Ваш питомец теряет сознание...\n\n` +
-          `Не сдавайтесь! Попробуйте снова.`,
-          mainKeyboard
-        );
+        user.inventory.push({ itemId: randomItem.id, quantity: 1 });
       }
-      
-      ctx.answerCbQuery();
-    });
+    }
+    
+    await saveUsers(users);
+    
+    await ctx.editMessageText(
+      `🎉 ПОБЕДА!\n\n` +
+      `Вы нанесли ${playerDamage} урона!\n` +
+      `Противник нанес ${aiDamage} урона.\n\n` +
+      `💰 Получено: ${reward} монет\n` +
+      `⭐ Опыта: +5\n` +
+      `${pet.level > user.pet.level ? `🎉 Уровень повышен! Теперь уровень ${pet.level}\n` : ''}` +
+      `❤️ Осталось здоровья: ${playerHealth.toFixed(1)}%\n\n` +
+      `Продолжайте в том же духе!`,
+      mainKeyboard
+    );
+  } else {
+    pet.health = 50; // Восстанавливаем немного здоровья
+    await saveUsers(users);
+    
+    await ctx.editMessageText(
+      `💀 ПОРАЖЕНИЕ\n\n` +
+      `Противник оказался сильнее!\n` +
+      `Ваш питомец теряет сознание...\n\n` +
+      `Не сдавайтесь! Попробуйте снова.`,
+      mainKeyboard
+    );
+  }
+  
+  await ctx.answerCbQuery();
+});
+
+bot.action('plant_seed', async (ctx) => {
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
+  
+  if (!user) {
+    await ctx.answerCbQuery('❌ Ошибка пользователя');
+    return;
+  }
+  
+  // Ищем семена в инвентаре
+  const seeds = user.inventory.filter(invItem => {
+    const item = defaultItems.find(i => i.id === invItem.itemId);
+    return item && item.type === 'seed';
   });
+  
+  if (seeds.length === 0) {
+    await ctx.answerCbQuery('У вас нет семян! Купите в магазине.');
+    return;
+  }
+  
+  // Создаем кнопки для выбора семян
+  const buttons = seeds.map(seed => {
+    const item = defaultItems.find(i => i.id === seed.itemId);
+    return [Markup.button.callback(`🌱 ${item.name} (осталось: ${seed.quantity})`, `use_seed_${seed.itemId}`)];
+  });
+  
+  buttons.push([Markup.button.callback('❌ Отмена', 'cancel_action')]);
+  
+  await ctx.editMessageText(
+    'Выберите семена для посадки:',
+    Markup.inlineKeyboard(buttons)
+  );
+});
+
+bot.action(/use_seed_(\d+)/, async (ctx) => {
+  const itemId = parseInt(ctx.match[1]);
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
+  
+  if (!user) {
+    await ctx.answerCbQuery('❌ Ошибка пользователя');
+    return;
+  }
+  
+  // Находим свободный слот
+  let freeSlot = null;
+  for (let i = 1; i <= 3; i++) {
+    if (!user.garden[`slot${i}`]) {
+      freeSlot = i;
+      break;
+    }
+  }
+  
+  if (!freeSlot) {
+    await ctx.answerCbQuery('❌ Нет свободных слотов в саду!');
+    return;
+  }
+  
+  // Используем семена
+  const seedIndex = user.inventory.findIndex(inv => inv.itemId === itemId);
+  if (seedIndex === -1) {
+    await ctx.answerCbQuery('❌ Семена не найдены!');
+    return;
+  }
+  
+  if (user.inventory[seedIndex].quantity === 1) {
+    user.inventory.splice(seedIndex, 1);
+  } else {
+    user.inventory[seedIndex].quantity -= 1;
+  }
+  
+  // Сажаем растение
+  const item = defaultItems.find(i => i.id === itemId);
+  user.garden[`slot${freeSlot}`] = item.name;
+  user.garden.plantedAt[`slot${freeSlot}`] = new Date().toISOString();
+  
+  await saveUsers(users);
+  
+  await ctx.editMessageText(
+    `🌱 Посажено ${item.name} в слот ${freeSlot}!\n` +
+    `Собирать урожай можно через 2 часа.`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('👈 Назад к саду', 'back_to_garden')]
+    ])
+  );
+});
+
+bot.action('buy_carrot', async (ctx) => {
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
+  
+  if (!user) {
+    await ctx.answerCbQuery('❌ Ошибка пользователя');
+    return;
+  }
+  
+  const carrotPrice = 5;
+  
+  if (user.coins < carrotPrice) {
+    await ctx.answerCbQuery('❌ Недостаточно монет!');
+    return;
+  }
+  
+  user.coins -= carrotPrice;
+  
+  // Добавляем морковь в инвентарь
+  const carrotId = 1; // ID моркови
+  const existingCarrot = user.inventory.find(inv => inv.itemId === carrotId);
+  if (existingCarrot) {
+    existingCarrot.quantity += 1;
+  } else {
+    user.inventory.push({ itemId: carrotId, quantity: 1 });
+  }
+  
+  await saveUsers(users);
+  
+  await ctx.answerCbQuery('✅ Куплена 1 морковь за 5 монет');
+  await ctx.editMessageText(
+    `🍎 Куплена 1 морковь!\n` +
+    `💰 Осталось монет: ${user.coins}\n` +
+    `🍎 Моркови в инвентаре: ${existingCarrot ? existingCarrot.quantity + 1 : 1}`,
+    mainKeyboard
+  );
 });
 
 bot.action('back_to_main', async (ctx) => {
@@ -548,7 +598,42 @@ bot.action('back_to_main', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
+bot.action('back_to_garden', async (ctx) => {
+  const users = await getUsers();
+  const userId = ctx.from.id.toString();
+  const user = users[userId];
+  
+  if (!user) return;
+  
+  const garden = user.garden;
+  
+  let gardenText = '🌱 Ваш сад:\n\n';
+  for (let i = 1; i <= 3; i++) {
+    const slot = garden[`slot${i}`];
+    gardenText += `${i}. ${slot ? `🌱 ${slot}` : '🌫️ Пусто'}\n`;
+  }
+  
+  await ctx.editMessageText(
+    gardenText,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🌱 Посадить растение', 'plant_seed')],
+      [Markup.button.callback('🌾 Собрать урожай', 'harvest_garden')]
+    ])
+  );
+});
+
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+function getStatusEmoji(value) {
+  if (value >= 80) return '🟢';
+  if (value >= 50) return '🟡';
+  if (value >= 30) return '🟠';
+  return '🔴';
+}
+
 // ==================== ЗАПУСК БОТА ====================
+// Инициализируем данные
+initData();
+
 // Подключаем keep-alive
 require('./keep-alive');
 
@@ -561,16 +646,7 @@ bot.launch()
   });
 
 // Graceful shutdown
-process.once('SIGINT', () => {
-  bot.stop('SIGINT');
-  db.close();
-  process.exit(0);
-});
-
-process.once('SIGTERM', () => {
-  bot.stop('SIGTERM');
-  db.close();
-  process.exit(0);
-});
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 console.log('🚀 Бот запускается...');
