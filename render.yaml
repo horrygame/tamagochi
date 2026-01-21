@@ -7,10 +7,6 @@ services:
     envVars:
       - key: BOT_TOKEN
         sync: false
-      - key: ADMIN_ID
-        sync: false
-      - key: RENDER_URL
-        sync: false
     healthCheckPath: /health
     autoDeploy: true
     plan: free
