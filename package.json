@@ -1,0 +1,19 @@
+{
+  "name": "telegram-tamagochi-bot",
+  "version": "1.0.0",
+  "description": "Tamagochi bot with battles, garden and inventory system",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.3",
+    "node-cron": "^3.0.3",
+    "axios": "^1.6.2",
+    "sqlite3": "^5.1.6",
+    "better-sqlite3": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
